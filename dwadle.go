@@ -1,0 +1,367 @@
+// Package dwadle provides a simple proxy for testing network
+// connections, offering various facilities to introduce unfavorable
+// network conditions.
+//
+// As the package is designed for use in testing, a large amount of
+// functionality is exported. It's recommended that you use the most
+// amount of composition that makes sense for you, with the intention
+// being that if you need access the more lower-level parts of the
+// package, they are available to you.
+package dwadle
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"strings"
+)
+
+const defaultBufferSize = 32 * 1024
+
+// ErrNewProxy denotes an error in proxy creation.
+func ErrNewProxy(err error) error {
+	return fmt.Errorf("error creating proxy: %w", err)
+}
+
+// ErrProxyListener denotes an error starting the proxy listener.
+func ErrProxyListener(err error) error {
+	return fmt.Errorf("error starting listener: %w", err)
+}
+
+// ErrProxyRun denotes an error running the proxy.
+func ErrProxyRun(err error) error {
+	return fmt.Errorf("error running proxy: %w", err)
+}
+
+// ErrProxyHandleRemoteConnect denotes an error making the connection
+// to the remote.
+func ErrProxyHandleRemoteConnect(err error) error {
+	return fmt.Errorf("error connecting to remote: %w", err)
+}
+
+// ErrProxyHandleStream denotes an error reading the connection.
+func ErrProxyHandleStream(err error) error {
+	return fmt.Errorf("error in network stream: %w", err)
+}
+
+// ErrProxyHandleStream denotes an error reading the connection.
+func ErrProxyHandleCloseListener(err error) error {
+	return fmt.Errorf("error closing listener: %w", err)
+}
+
+// ErrProxyClose denotes an error on general close. Errors are not
+// wrapped.
+func ErrProxyClose(errs []error) error {
+	b := new(strings.Builder)
+	for _, e := range errs {
+		b.WriteString(e.Error())
+		b.WriteRune('\n')
+	}
+
+	return errors.New(b.String())
+}
+
+// ErrProxyCloseListener denotes an error closing the listener.
+func ErrProxyCloseListener(err error) error {
+	return fmt.Errorf("error closing listener: %w", err)
+}
+
+// ErrProxyCloseConnections denotes an error closing the listener.
+// Individual errors are not wrapped.
+func ErrProxyCloseConnections(errs []error) error {
+	msgs := make([]string, len(errs))
+	for i, e := range errs {
+		msgs[i] = e.Error()
+	}
+
+	return fmt.Errorf("error closing connections:\n\t%s", strings.Join(msgs, "\n\t"))
+}
+
+// ProxyOption are options designed to control the behavior of the
+// proxy.
+type ProxyOption func(p *Proxy) error
+
+// WithRbufSize supplies the read buffer size for proxied
+// connections. A size of less than 1 means the default size will be
+// used (32k).
+func WithRbufSize(size int) func(p *Proxy) error {
+	return func(p *Proxy) error {
+		if size < 1 {
+			size = defaultBufferSize
+		}
+
+		p.rbufSize = size
+		return nil
+	}
+}
+
+// WithWbufSize supplies the write buffer size for proxied
+// connections. A size of less than 1 means the default size will be
+// used (32k).
+func WithWbufSize(size int) func(p *Proxy) error {
+	return func(p *Proxy) error {
+		if size < 1 {
+			size = defaultBufferSize
+		}
+
+		p.wbufSize = size
+		return nil
+	}
+}
+
+// WithLogger sets a log for writing deep errors and other debugging
+// data to.
+func WithLogger(logger *log.Logger) func(p *Proxy) error {
+	return func(p *Proxy) error {
+		p.logger = logger
+		return nil
+	}
+}
+
+// Proxy represents a proxy server.
+type Proxy struct {
+	proto              string
+	localAddr          string
+	remoteAddr         string
+	ln                 net.Listener
+	conns              map[string]net.Conn
+	rbufSize, wbufSize int
+	pauseCh            chan struct{}
+	logger             *log.Logger
+}
+
+// NewProxy creates the proxy, connecting localAddr with remoteAddr.
+func NewProxy(proto, localAddr, remoteAddr string, opts ...ProxyOption) (*Proxy, error) {
+	// Validate remoteAddr so that we won't run into errors using it
+	// later.
+	switch proto {
+	case "tcp":
+		if _, err := net.ResolveTCPAddr(proto, remoteAddr); err != nil {
+			return nil, ErrNewProxy(err)
+		}
+
+	case "udp":
+		if _, err := net.ResolveUDPAddr(proto, remoteAddr); err != nil {
+			return nil, ErrNewProxy(err)
+		}
+
+	default:
+		return nil, ErrNewProxy(fmt.Errorf("unsupported protocol %s", proto))
+	}
+
+	p := &Proxy{
+		proto:      proto,
+		localAddr:  localAddr,
+		remoteAddr: remoteAddr,
+		conns:      make(map[string]net.Conn),
+		rbufSize:   defaultBufferSize,
+		wbufSize:   defaultBufferSize,
+		pauseCh: func() chan struct{} {
+			c := make(chan struct{})
+			close(c)
+			return c
+		}(),
+	}
+
+	for _, opt := range opts {
+		if err := opt(p); err != nil {
+			return nil, ErrNewProxy(err)
+		}
+	}
+
+	return p, nil
+}
+
+// ListenerAddr gives the address of the listener. If the listener
+// has not been started yet, it returns empty.
+func (p *Proxy) ListenerAddr() string {
+	if p.ln == nil {
+		return ""
+	}
+
+	return p.ln.Addr().String()
+}
+
+// Start starts the server and returns immediately, as long as the
+// listener can be started.
+func (p *Proxy) Start() error {
+	if err := p.startListener(); err != nil {
+		return err
+	}
+
+	go func() {
+		err := p.run()
+		p.log(err.Error())
+	}()
+
+	return nil
+}
+
+// Run starts the listener, runs the main accept loop, and hands off
+// to proxy handlers.
+//
+// Run blocks until it's done and returns any error from the last
+// Accept() on the listener. Use Start() instead if you do not want
+// control over this process and would rather just return
+// immediately.
+func (p *Proxy) Run() error {
+	if err := p.startListener(); err != nil {
+		return err
+	}
+
+	return p.run()
+}
+
+// Close shuts down the listener and all connections.
+func (p *Proxy) Close() error {
+	var errs []error
+	if err := p.CloseListener(); err != nil {
+		errs = append(errs, err)
+	}
+
+	if err := p.CloseConnections(); err != nil {
+		errs = append(errs, err)
+	}
+
+	if len(errs) > 0 {
+		return ErrProxyClose(errs)
+	}
+
+	return nil
+}
+
+// CloseListener shuts down the listener. It does not shut down any
+// existing connections.
+func (p *Proxy) CloseListener() error {
+	if p.ln != nil {
+		if err := p.ln.Close(); err != nil {
+			return ErrProxyCloseListener(err)
+		}
+	}
+
+	return nil
+}
+
+// CloseConnections shuts down all existing connections. It does not
+// shut down the listener.
+func (p *Proxy) CloseConnections() error {
+	var errs []error
+	for _, conn := range p.conns {
+		if err := conn.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	if len(errs) > 0 {
+		return ErrProxyCloseConnections(errs)
+	}
+
+	return nil
+}
+
+// Pause re-initializes the internal pause channel and leaves it
+// open.
+//
+// This causes all any and all handlers to stop what they are doing:
+// sending and receiving is paused after the most recent copy is
+// done, and new connections are blocked after connecting.
+//
+// Note that any copies that are currently blocked will complete
+// before pausing. Consider turning buffers down if you are having
+// trouble pausing mid-stream.
+//
+// All functions block until Resume is called.
+func (p *Proxy) Pause() {
+	p.pauseCh = make(chan struct{})
+}
+
+// Resume resumes any blocked connections by closing the internal
+// pause channel. After this, Pause must be called again to pause
+// connections.
+//
+// Note that calling Resume without pausing the proxy first, or
+// calling resume consecutively, will cause a panic.
+func (p *Proxy) Resume() {
+	close(p.pauseCh)
+}
+
+func (p *Proxy) run() error {
+	for {
+		conn, err := p.ln.Accept()
+		if err != nil {
+			return ErrProxyRun(err)
+		}
+
+		p.conns[conn.RemoteAddr().String()] = conn
+		go func() {
+			err := p.Handle(conn)
+			p.log(err.Error())
+		}()
+	}
+}
+
+// Handle is the general read-write handler for the connection.
+//
+// Handle handles connection with and the general read/write loops
+// with the remote host.
+func (p *Proxy) Handle(local net.Conn) error {
+	defer local.Close()
+
+	// Connect to remote
+	remote, err := net.Dial(p.proto, p.remoteAddr)
+	if err != nil {
+		return ErrProxyHandleRemoteConnect(err)
+	}
+
+	defer remote.Close()
+
+	errCh := make(chan error)
+	// Read loop
+	go func() {
+		for {
+			<-p.pauseCh
+			if _, err := io.CopyN(remote, local, int64(p.rbufSize)); err != nil {
+				errCh <- err
+				break
+			}
+		}
+	}()
+
+	// Write loop
+	go func() {
+		for {
+			<-p.pauseCh
+			if _, err := io.CopyN(local, remote, int64(p.wbufSize)); err != nil {
+				errCh <- err
+				break
+			}
+		}
+	}()
+
+	err = <-errCh
+	return ErrProxyHandleStream(err)
+}
+
+// startListener starts the listener.
+func (p *Proxy) startListener() error {
+	if p.ln != nil {
+		return ErrProxyListener(errors.New("listener already started"))
+	}
+
+	var err error
+	p.ln, err = net.Listen(p.proto, p.localAddr)
+	if err != nil {
+		return ErrProxyListener(err)
+	}
+
+	return nil
+}
+
+// log is an internal function that logs if a logger is present.
+func (p *Proxy) log(s string) {
+	if p.logger != nil {
+		p.logger.Println(s)
+	}
+}
