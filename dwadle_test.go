@@ -382,6 +382,33 @@ func TestNewProxyListenErr(t *testing.T) {
 	}
 }
 
+func TestNewProxyWithListener(t *testing.T) {
+	ln, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	proxy, err := NewProxy("tcp", "bad+addr", "localhost:12345", WithListener(ln))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer proxy.Close()
+
+	err = proxy.Start()
+	if err == nil {
+		t.Fatal("expected error, got none")
+	}
+
+	if err.Error() != "error starting listener: listener already started" {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	if proxy.ln != ln {
+		t.Fatal("unexpected listener set")
+	}
+}
+
 // TODO: Fix this so that it works. Timing/buffering issues make this
 // frustratingly impossible.
 //

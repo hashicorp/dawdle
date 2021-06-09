@@ -120,6 +120,31 @@ func WithLogger(logger *log.Logger) func(p *Proxy) error {
 	}
 }
 
+// WithListener allows an existing listener to be passed in as the
+// local connection.
+//
+// Note that if this is passed in, localAddr in NewProxy is ignored,
+// and the server is started immediately.
+//
+// The protocol of the listener needs to match the protocol passed
+// into NewProxy. Only TCP listeners are allowed.
+func WithListener(ln net.Listener) func(p *Proxy) error {
+	return func(p *Proxy) error {
+		switch ln.(type) {
+		case *net.TCPListener:
+			if p.proto != "tcp" {
+				return fmt.Errorf("listener type mismatch: TCP listener for %s proto", p.proto)
+			}
+
+		default:
+			return fmt.Errorf("unsupported listener protocol %s", ln.Addr().Network())
+		}
+
+		p.ln = ln
+		return nil
+	}
+}
+
 // Proxy represents a proxy server.
 type Proxy struct {
 	proto              string
@@ -169,6 +194,13 @@ func NewProxy(proto, localAddr, remoteAddr string, opts ...ProxyOption) (*Proxy,
 		if err := opt(p); err != nil {
 			return nil, ErrNewProxy(err)
 		}
+	}
+
+	if p.ln != nil {
+		go func() {
+			err := p.run()
+			p.log(err.Error())
+		}()
 	}
 
 	return p, nil
