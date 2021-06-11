@@ -158,17 +158,14 @@ type Proxy struct {
 }
 
 // NewProxy creates the proxy, connecting localAddr with remoteAddr.
+//
+// Currently the only protocol supported is "tcp".
 func NewProxy(proto, localAddr, remoteAddr string, opts ...ProxyOption) (*Proxy, error) {
 	// Validate remoteAddr so that we won't run into errors using it
 	// later.
 	switch proto {
 	case "tcp":
 		if _, err := net.ResolveTCPAddr(proto, remoteAddr); err != nil {
-			return nil, ErrNewProxy(err)
-		}
-
-	case "udp":
-		if _, err := net.ResolveUDPAddr(proto, remoteAddr); err != nil {
 			return nil, ErrNewProxy(err)
 		}
 

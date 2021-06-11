@@ -301,17 +301,6 @@ func TestNewProxyBadTCPAddress(t *testing.T) {
 	}
 }
 
-func TestNewProxyBadUDPAddress(t *testing.T) {
-	_, err := NewProxy("udp", "", "bad+addr")
-	if err == nil {
-		t.Fatal("expected error, got none")
-	}
-
-	if err.Error() != "error creating proxy: address bad+addr: missing port in address" {
-		t.Fatalf("unexpected error: %s", err)
-	}
-}
-
 func TestNewProxyBadProto(t *testing.T) {
 	_, err := NewProxy("bad", "", "")
 	if err == nil {
