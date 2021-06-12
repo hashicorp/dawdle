@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"sync"
 	"testing"
 	"time"
 )
@@ -428,3 +429,228 @@ func TestNewProxyWithListener(t *testing.T) {
 // 		t.Fatalf("expected 0 bytes written")
 // 	}
 // }
+
+func TestProxyConnMap(t *testing.T) {
+	ts := runTestTcpServer(t)
+	if ts.Buffer().Len() != 0 {
+		t.Fatal("test buffer should be zero")
+	}
+
+	defer ts.Close()
+
+	// Create the proxy
+	proxy, err := NewProxy("tcp", ":0", ts.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer proxy.Close()
+	proxy.Start()
+
+	// Create two connections
+	c1, err := net.Dial("tcp", proxy.ListenerAddr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c1.Close()
+
+	// Create two connections
+	c2, err := net.Dial("tcp", proxy.ListenerAddr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c2.Close()
+
+	// Expect entires in the map
+	c1addr := c1.LocalAddr().String()
+	c2addr := c2.LocalAddr().String()
+	if len(proxy.conns.m) != 2 {
+		t.Fatalf("expected connection map to have 2 entries, got %d", len(proxy.conns.m))
+	}
+	if _, ok := proxy.conns.m[c1addr]; !ok {
+		t.Fatalf("connection key %s not in map", c1addr)
+	}
+	if _, ok := proxy.conns.m[c2addr]; !ok {
+		t.Fatalf("connection key %s not in map", c2addr)
+	}
+
+	// Close a connection
+	c1.Close()
+	if err := waitConnMapLen(proxy.conns.m, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := proxy.conns.m[c1addr]; ok {
+		t.Fatalf("connection key %s should not be in map", c1addr)
+	}
+
+	// Close the other
+	c2.Close()
+	if err := waitConnMapLen(proxy.conns.m, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := proxy.conns.m[c2addr]; ok {
+		t.Fatalf("connection key %s should not be in map", c1addr)
+	}
+}
+
+func waitConnMapLen(m map[string]net.Conn, expected int) error {
+	for i := 0; i < 100; i++ {
+		if len(m) == expected {
+			return nil
+		}
+
+		time.Sleep(time.Millisecond * 10)
+	}
+
+	return fmt.Errorf("timeout waiting for map to be len=%d, got %d", expected, len(m))
+}
+
+func TestProxyCloseConnections(t *testing.T) {
+	ts := runTestTcpServer(t)
+	if ts.Buffer().Len() != 0 {
+		t.Fatal("test buffer should be zero")
+	}
+
+	defer ts.Close()
+
+	// Create the proxy
+	proxy, err := NewProxy("tcp", ":0", ts.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer proxy.Close()
+	proxy.Start()
+
+	// Create two connections
+	c1, err := net.Dial("tcp", proxy.ListenerAddr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c1.Close()
+
+	// Create two connections
+	c2, err := net.Dial("tcp", proxy.ListenerAddr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c2.Close()
+
+	// Expect entires in the map
+	c1addr := c1.LocalAddr().String()
+	c2addr := c2.LocalAddr().String()
+	if err := waitConnMapLen(proxy.conns.m, 2); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := proxy.conns.m[c1addr]; !ok {
+		t.Fatalf("connection key %s not in map", c1addr)
+	}
+	if _, ok := proxy.conns.m[c2addr]; !ok {
+		t.Fatalf("connection key %s not in map", c2addr)
+	}
+
+	// Start reads in goroutines, these should block until we kill them
+	var wg sync.WaitGroup
+	wg.Add(2)
+	var b1, b2 []byte
+	go func() {
+		b1, _ = io.ReadAll(c1)
+		wg.Done()
+	}()
+	go func() {
+		b2, _ = io.ReadAll(c2)
+		wg.Done()
+	}()
+	// Kill all connections and wait
+	if err := proxy.CloseConnections(); err != nil {
+		t.Fatal(err)
+	}
+	wg.Wait()
+
+	// Assert 0 bytes read
+	if len(b1) != 0 {
+		t.Error("should have read 0 bytes from c1")
+	}
+	if len(b2) != 0 {
+		t.Error("should have read 0 bytes from c2")
+	}
+	// Assert errors. TODO: Fix this, or remove it... apparently this is giving
+	// nil, not too sure why.
+	//
+	// if !errors.Is(err1, net.ErrClosed) {
+	// 	t.Errorf("expected err1 to be net.ErrClosed, got %s", err)
+	// }
+	// if !errors.Is(err2, net.ErrClosed) {
+	// 	t.Errorf("expected err2 to be net.ErrClosed, got %s", err)
+	// }
+	// Assert we have an empty map
+	if err := waitConnMapLen(proxy.conns.m, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	// Finally assert that killing current connections did not break ability to
+	// create a new connection.
+	c3, err := net.Dial("tcp", proxy.ListenerAddr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c3.Close()
+
+	if _, err := io.WriteString(c3, "foobar"); err != nil {
+		t.Fatal(err)
+	}
+
+	c3.Close()
+	if err := ts.WaitBuffer([]byte("foobar")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProxyPauseNewConn(t *testing.T) {
+	ts := runTestTcpServer(t)
+	if ts.Buffer().Len() != 0 {
+		t.Fatal("test buffer should be zero")
+	}
+
+	defer ts.Close()
+
+	// Create the proxy
+	proxy, err := NewProxy("tcp", ":0", ts.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer proxy.Close()
+	proxy.Start()
+
+	// Pause immediately
+	proxy.Pause()
+
+	// Connect
+	conn, err := net.Dial("tcp", proxy.ListenerAddr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	// This should succeed, due to buffering on the OS side (we can fix it if the
+	// test ever fails)
+	if _, err := io.WriteString(conn, "foobar"); err != nil {
+		t.Fatal(err)
+	}
+
+	// ... but should not have made it to the buffer
+	if err := ts.WaitBuffer([]byte("foobar")); err == nil {
+		t.Fatal("expected no update to test server buffer")
+	}
+
+	if ts.Buffer().Len() != 0 {
+		t.Fatal("expected zero buffer size")
+	}
+
+	// Unpause, this should send the data
+	proxy.Resume()
+	if err := ts.WaitBuffer([]byte("foobar")); err != nil {
+		t.Fatal(err)
+	}
+}

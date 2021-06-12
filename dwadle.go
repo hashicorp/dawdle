@@ -16,6 +16,7 @@ import (
 	"log"
 	"net"
 	"strings"
+	"sync"
 )
 
 const defaultBufferSize = 32 * 1024
@@ -151,10 +152,53 @@ type Proxy struct {
 	localAddr          string
 	remoteAddr         string
 	ln                 net.Listener
-	conns              map[string]net.Conn
+	conns              *connMap
 	rbufSize, wbufSize int
 	pauseCh            chan struct{}
 	logger             *log.Logger
+}
+
+type connMap struct {
+	sync.Mutex
+	m map[string]net.Conn
+}
+
+func newConnMap() *connMap {
+	return &connMap{
+		m: make(map[string]net.Conn),
+	}
+}
+
+func (m *connMap) Store(c net.Conn) {
+	m.Lock()
+	defer m.Unlock()
+	m.m[c.RemoteAddr().String()] = c
+}
+
+func (m *connMap) Delete(c net.Conn) {
+	m.Lock()
+	defer m.Unlock()
+	delete(m.m, c.RemoteAddr().String())
+}
+
+// CloseAll closes and deletes all existing connections in the
+// connMap. A single lock is held for the duration.
+//
+// Connections are deleted regardless of whether or not there is an
+// error.
+func (m *connMap) CloseAll() []error {
+	m.Lock()
+	defer m.Unlock()
+	var errs []error
+	for _, c := range m.m {
+		if err := c.Close(); err != nil {
+			errs = append(errs, err)
+		}
+
+		delete(m.m, c.RemoteAddr().String())
+	}
+
+	return errs
 }
 
 // NewProxy creates the proxy, connecting localAddr with remoteAddr.
@@ -177,7 +221,7 @@ func NewProxy(proto, localAddr, remoteAddr string, opts ...ProxyOption) (*Proxy,
 		proto:      proto,
 		localAddr:  localAddr,
 		remoteAddr: remoteAddr,
-		conns:      make(map[string]net.Conn),
+		conns:      newConnMap(),
 		rbufSize:   defaultBufferSize,
 		wbufSize:   defaultBufferSize,
 		pauseCh: func() chan struct{} {
@@ -276,13 +320,7 @@ func (p *Proxy) CloseListener() error {
 // CloseConnections shuts down all existing connections. It does not
 // shut down the listener.
 func (p *Proxy) CloseConnections() error {
-	var errs []error
-	for _, conn := range p.conns {
-		if err := conn.Close(); err != nil {
-			errs = append(errs, err)
-		}
-	}
-
+	errs := p.conns.CloseAll()
 	if len(errs) > 0 {
 		return ErrProxyCloseConnections(errs)
 	}
@@ -323,10 +361,11 @@ func (p *Proxy) run() error {
 			return ErrProxyRun(err)
 		}
 
-		p.conns[conn.RemoteAddr().String()] = conn
+		p.conns.Store(conn)
 		go func() {
 			err := p.Handle(conn)
 			p.log(err.Error())
+			p.conns.Delete(conn)
 		}()
 	}
 }
