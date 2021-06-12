@@ -339,7 +339,9 @@ func (p *Proxy) CloseConnections() error {
 // before pausing. Consider turning buffers down if you are having
 // trouble pausing mid-stream.
 //
-// All functions block until Resume is called.
+// Note that it's unsupported and undefined right now to call pause
+// twice in a row - this will likely cause some connections to block
+// forever and be un-resumable. This will be fixed in later versions.
 func (p *Proxy) Pause() {
 	p.pauseCh = make(chan struct{})
 }
