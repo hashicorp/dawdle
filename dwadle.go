@@ -1,4 +1,4 @@
-// Package dwadle provides a simple proxy for testing network
+// Package dawdle provides a simple proxy for testing network
 // connections, offering various facilities to introduce unfavorable
 // network conditions.
 //
@@ -7,7 +7,7 @@
 // amount of composition that makes sense for you, with the intention
 // being that if you need access the more lower-level parts of the
 // package, they are available to you.
-package dwadle
+package dawdle
 
 import (
 	"errors"

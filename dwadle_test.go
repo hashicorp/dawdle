@@ -1,4 +1,4 @@
-package dwadle
+package dawdle
 
 import (
 	"bytes"

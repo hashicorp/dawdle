@@ -1,6 +1,6 @@
-# dwadle
+# dawdle
 
-Dwadle (ie: "take your time, no really" 😜) is a simple proxy for testing
+Dawdle (ie: "take your time, no really" 😜) is a simple proxy for testing
 network connections, offering various facilities to introduce unfavorable
 network conditions.
 
@@ -14,4 +14,4 @@ network conditions.
 
 ## Documentation
 
-View it on [pkg.go.dev](https://pkg.go.dev/search?q=github.com%2Fvancluever%2Fdwadle).
+View it on [pkg.go.dev](https://pkg.go.dev/search?q=github.com%2Fvancluever%2Fdawdle).
