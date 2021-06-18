@@ -14,4 +14,4 @@ network conditions.
 
 ## Documentation
 
-View it on [pkg.go.dev](https://pkg.go.dev/search?q=github.com%2Fvancluever%2Fdawdle).
+View it on [pkg.go.dev](https://pkg.go.dev/search?q=github.com%2Fhashicorp%2Fdawdle).
