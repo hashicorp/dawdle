@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 // Package dawdle provides a simple proxy for testing network
 // connections, offering various facilities to introduce unfavorable
 // network conditions.
