@@ -85,13 +85,13 @@ func ErrProxyCloseConnections(errs []error) error {
 
 // ProxyOption are options designed to control the behavior of the
 // proxy.
-type ProxyOption func(p *Proxy) error
+type ProxyOption func(p *proxy) error
 
 // WithRbufSize supplies the read buffer size for proxied
 // connections. A size of less than 1 means the default size will be
 // used (32k).
-func WithRbufSize(size int) func(p *Proxy) error {
-	return func(p *Proxy) error {
+func WithRbufSize(size int) func(p *proxy) error {
+	return func(p *proxy) error {
 		if size < 1 {
 			size = defaultBufferSize
 		}
@@ -104,8 +104,8 @@ func WithRbufSize(size int) func(p *Proxy) error {
 // WithWbufSize supplies the write buffer size for proxied
 // connections. A size of less than 1 means the default size will be
 // used (32k).
-func WithWbufSize(size int) func(p *Proxy) error {
-	return func(p *Proxy) error {
+func WithWbufSize(size int) func(p *proxy) error {
+	return func(p *proxy) error {
 		if size < 1 {
 			size = defaultBufferSize
 		}
@@ -117,8 +117,8 @@ func WithWbufSize(size int) func(p *Proxy) error {
 
 // WithLogger sets a log for writing deep errors and other debugging
 // data to.
-func WithLogger(logger *log.Logger) func(p *Proxy) error {
-	return func(p *Proxy) error {
+func WithLogger(logger *log.Logger) func(p *proxy) error {
+	return func(p *proxy) error {
 		p.logger = logger
 		return nil
 	}
@@ -132,8 +132,8 @@ func WithLogger(logger *log.Logger) func(p *Proxy) error {
 //
 // The protocol of the listener needs to match the protocol passed
 // into NewProxy. Only TCP listeners are allowed.
-func WithListener(ln net.Listener) func(p *Proxy) error {
-	return func(p *Proxy) error {
+func WithListener(ln net.Listener) func(p *proxy) error {
+	return func(p *proxy) error {
 		switch ln.(type) {
 		case *net.TCPListener:
 			if p.proto != "tcp" {
@@ -150,7 +150,7 @@ func WithListener(ln net.Listener) func(p *Proxy) error {
 }
 
 // Proxy represents a proxy server.
-type Proxy struct {
+type proxy struct {
 	proto              string
 	localAddr          string
 	remoteAddr         string
@@ -158,17 +158,19 @@ type Proxy struct {
 	conns              *connMap
 	rbufSize, wbufSize int
 	pauseCh            chan struct{}
+	pauseChMutex       *sync.RWMutex
 	logger             *log.Logger
 }
 
 type connMap struct {
-	sync.Mutex
+	*sync.RWMutex
 	m map[string]net.Conn
 }
 
 func newConnMap() *connMap {
 	return &connMap{
-		m: make(map[string]net.Conn),
+		RWMutex: new(sync.RWMutex),
+		m:       make(map[string]net.Conn),
 	}
 }
 
@@ -207,7 +209,7 @@ func (m *connMap) CloseAll() []error {
 // NewProxy creates the proxy, connecting localAddr with remoteAddr.
 //
 // Currently the only protocol supported is "tcp".
-func NewProxy(proto, localAddr, remoteAddr string, opts ...ProxyOption) (*Proxy, error) {
+func NewProxy(proto, localAddr, remoteAddr string, opts ...ProxyOption) (*proxy, error) {
 	// Validate remoteAddr so that we won't run into errors using it
 	// later.
 	switch proto {
@@ -220,7 +222,7 @@ func NewProxy(proto, localAddr, remoteAddr string, opts ...ProxyOption) (*Proxy,
 		return nil, ErrNewProxy(fmt.Errorf("unsupported protocol %s", proto))
 	}
 
-	p := &Proxy{
+	p := &proxy{
 		proto:      proto,
 		localAddr:  localAddr,
 		remoteAddr: remoteAddr,
@@ -232,6 +234,7 @@ func NewProxy(proto, localAddr, remoteAddr string, opts ...ProxyOption) (*Proxy,
 			close(c)
 			return c
 		}(),
+		pauseChMutex: new(sync.RWMutex),
 	}
 
 	for _, opt := range opts {
@@ -252,7 +255,7 @@ func NewProxy(proto, localAddr, remoteAddr string, opts ...ProxyOption) (*Proxy,
 
 // ListenerAddr gives the address of the listener. If the listener
 // has not been started yet, it returns empty.
-func (p *Proxy) ListenerAddr() string {
+func (p *proxy) ListenerAddr() string {
 	if p.ln == nil {
 		return ""
 	}
@@ -262,7 +265,7 @@ func (p *Proxy) ListenerAddr() string {
 
 // Start starts the server and returns immediately, as long as the
 // listener can be started.
-func (p *Proxy) Start() error {
+func (p *proxy) Start() error {
 	if err := p.startListener(); err != nil {
 		return err
 	}
@@ -282,7 +285,7 @@ func (p *Proxy) Start() error {
 // Accept() on the listener. Use Start() instead if you do not want
 // control over this process and would rather just return
 // immediately.
-func (p *Proxy) Run() error {
+func (p *proxy) Run() error {
 	if err := p.startListener(); err != nil {
 		return err
 	}
@@ -291,7 +294,7 @@ func (p *Proxy) Run() error {
 }
 
 // Close shuts down the listener and all connections.
-func (p *Proxy) Close() error {
+func (p *proxy) Close() error {
 	var errs []error
 	if err := p.CloseListener(); err != nil {
 		errs = append(errs, err)
@@ -310,7 +313,7 @@ func (p *Proxy) Close() error {
 
 // CloseListener shuts down the listener. It does not shut down any
 // existing connections.
-func (p *Proxy) CloseListener() error {
+func (p *proxy) CloseListener() error {
 	if p.ln != nil {
 		if err := p.ln.Close(); err != nil {
 			return ErrProxyCloseListener(err)
@@ -322,7 +325,7 @@ func (p *Proxy) CloseListener() error {
 
 // CloseConnections shuts down all existing connections. It does not
 // shut down the listener.
-func (p *Proxy) CloseConnections() error {
+func (p *proxy) CloseConnections() error {
 	errs := p.conns.CloseAll()
 	if len(errs) > 0 {
 		return ErrProxyCloseConnections(errs)
@@ -345,8 +348,10 @@ func (p *Proxy) CloseConnections() error {
 // Note that it's unsupported and undefined right now to call pause
 // twice in a row - this will likely cause some connections to block
 // forever and be un-resumable. This will be fixed in later versions.
-func (p *Proxy) Pause() {
+func (p *proxy) Pause() {
+	p.pauseChMutex.Lock()
 	p.pauseCh = make(chan struct{})
+	p.pauseChMutex.Unlock()
 }
 
 // Resume resumes any blocked connections by closing the internal
@@ -355,11 +360,13 @@ func (p *Proxy) Pause() {
 //
 // Note that calling Resume without pausing the proxy first, or
 // calling resume consecutively, will cause a panic.
-func (p *Proxy) Resume() {
+func (p *proxy) Resume() {
+	p.pauseChMutex.Lock()
 	close(p.pauseCh)
+	p.pauseChMutex.Unlock()
 }
 
-func (p *Proxy) run() error {
+func (p *proxy) run() error {
 	for {
 		conn, err := p.ln.Accept()
 		if err != nil {
@@ -379,7 +386,7 @@ func (p *Proxy) run() error {
 //
 // Handle handles connection with and the general read/write loops
 // with the remote host.
-func (p *Proxy) Handle(local net.Conn) error {
+func (p *proxy) Handle(local net.Conn) error {
 	defer local.Close()
 
 	// Connect to remote
@@ -391,10 +398,13 @@ func (p *Proxy) Handle(local net.Conn) error {
 	defer remote.Close()
 
 	errCh := make(chan error)
-	// Read loop
+
 	go func() {
 		for {
-			<-p.pauseCh
+			p.pauseChMutex.RLock()
+			pauseCh := p.pauseCh
+			p.pauseChMutex.RUnlock()
+			<-pauseCh
 			if _, err := io.CopyN(remote, local, int64(p.rbufSize)); err != nil {
 				errCh <- err
 				break
@@ -402,10 +412,12 @@ func (p *Proxy) Handle(local net.Conn) error {
 		}
 	}()
 
-	// Write loop
 	go func() {
 		for {
-			<-p.pauseCh
+			p.pauseChMutex.RLock()
+			pauseCh := p.pauseCh
+			p.pauseChMutex.RUnlock()
+			<-pauseCh
 			if _, err := io.CopyN(local, remote, int64(p.wbufSize)); err != nil {
 				errCh <- err
 				break
@@ -418,7 +430,7 @@ func (p *Proxy) Handle(local net.Conn) error {
 }
 
 // startListener starts the listener.
-func (p *Proxy) startListener() error {
+func (p *proxy) startListener() error {
 	if p.ln != nil {
 		return ErrProxyListener(errors.New("listener already started"))
 	}
@@ -433,7 +445,7 @@ func (p *Proxy) startListener() error {
 }
 
 // log is an internal function that logs if a logger is present.
-func (p *Proxy) log(s string) {
+func (p *proxy) log(s string) {
 	if p.logger != nil {
 		p.logger.Println(s)
 	}

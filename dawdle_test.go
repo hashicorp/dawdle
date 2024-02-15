@@ -18,16 +18,21 @@ import (
 )
 
 type testTcpServer struct {
-	ln net.Listener
-	b  *bytes.Buffer
+	ln      net.Listener
+	reader  *io.PipeReader
+	writer  *io.PipeWriter
+	buf     *bytes.Buffer
+	bufLock *sync.RWMutex
 }
 
 func runTestTcpServer(t *testing.T) *testTcpServer {
 	t.Helper()
 
 	s := &testTcpServer{
-		b: new(bytes.Buffer),
+		buf:     new(bytes.Buffer),
+		bufLock: new(sync.RWMutex),
 	}
+	s.reader, s.writer = io.Pipe()
 	var err error
 	s.ln, err = net.Listen("tcp", ":0")
 	if err != nil {
@@ -46,9 +51,29 @@ func runTestTcpServer(t *testing.T) *testTcpServer {
 			}
 
 			go func(c net.Conn) {
-				io.Copy(s.b, c)
+				io.Copy(s.writer, c)
 				c.Close()
 			}(conn)
+
+			go func() {
+				buf := make([]byte, 1)
+				var err error
+				for {
+					_, err = s.reader.Read(buf)
+					if err != nil {
+						if err == io.EOF {
+							return
+						}
+						panic(err)
+					}
+					s.bufLock.Lock()
+					_, err := s.buf.Write(buf)
+					s.bufLock.Unlock()
+					if err != nil {
+						panic(err)
+					}
+				}
+			}()
 		}
 	}()
 
@@ -63,8 +88,16 @@ func (s *testTcpServer) Addr() string {
 	return s.ln.Addr().String()
 }
 
-func (s *testTcpServer) Buffer() *bytes.Buffer {
-	return s.b
+func (s *testTcpServer) BufLen() int {
+	s.bufLock.RLock()
+	defer s.bufLock.RUnlock()
+	return s.buf.Len()
+}
+
+func (s *testTcpServer) BufBytes() []byte {
+	s.bufLock.RLock()
+	defer s.bufLock.RUnlock()
+	return s.buf.Bytes()
 }
 
 func (s *testTcpServer) WaitBuffer(expected []byte) error {
@@ -78,7 +111,7 @@ func (s *testTcpServer) WaitBuffer(expected []byte) error {
 				return
 			}
 
-			if bytes.Equal(s.Buffer().Bytes(), expected) {
+			if bytes.Equal(s.BufBytes(), expected) {
 				close(doneCh)
 				return
 			}
@@ -97,7 +130,7 @@ func (s *testTcpServer) WaitBuffer(expected []byte) error {
 	}
 
 	if err != nil {
-		return fmt.Errorf("error waiting for buffer, expectedlen=%d,actuallen=%d, err: %s", len(expected), s.Buffer().Len(), err)
+		return fmt.Errorf("error waiting for buffer, expectedlen=%d,actuallen=%d, err: %s", len(expected), s.BufLen(), err)
 	}
 
 	return nil
@@ -105,7 +138,7 @@ func (s *testTcpServer) WaitBuffer(expected []byte) error {
 
 func TestTestTcpServer(t *testing.T) {
 	ts := runTestTcpServer(t)
-	if ts.Buffer().Len() != 0 {
+	if ts.BufLen() != 0 {
 		t.Fatal("test buffer should be zero")
 	}
 
@@ -128,14 +161,14 @@ func TestTestTcpServer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if ts.Buffer().String() != expected {
-		t.Fatalf("expected buffer to have %v, got %v", expected, ts.Buffer().String())
+	if string(ts.BufBytes()) != expected {
+		t.Fatalf("expected buffer to have %v, got %v", expected, string(ts.BufBytes()))
 	}
 }
 
 func TestProxy(t *testing.T) {
 	ts := runTestTcpServer(t)
-	if ts.Buffer().Len() != 0 {
+	if ts.BufLen() != 0 {
 		t.Fatal("test buffer should be zero")
 	}
 
@@ -217,7 +250,7 @@ func TestProxy(t *testing.T) {
 
 	actualN, err = conn.Write(writeBuffer)
 	if err == nil {
-		t.Fatal("expected error, got none")
+		t.Fatal("expected error, got none, bytes written: ", actualN)
 	} else {
 		if !errors.Is(err, os.ErrDeadlineExceeded) {
 			// Unexpected error
@@ -318,7 +351,7 @@ func TestNewProxyBadProto(t *testing.T) {
 
 func TestNewProxyBuffers(t *testing.T) {
 	ts := runTestTcpServer(t)
-	if ts.Buffer().Len() != 0 {
+	if ts.BufLen() != 0 {
 		t.Fatal("test buffer should be zero")
 	}
 
@@ -340,8 +373,8 @@ func TestNewProxyBuffers(t *testing.T) {
 	}
 }
 
-func testWithBadOpt() func(p *Proxy) error {
-	return func(p *Proxy) error {
+func testWithBadOpt() func(p *proxy) error {
+	return func(p *proxy) error {
 		return errors.New("foobar")
 	}
 }
@@ -435,7 +468,7 @@ func TestNewProxyWithListener(t *testing.T) {
 
 func TestProxyConnMap(t *testing.T) {
 	ts := runTestTcpServer(t)
-	if ts.Buffer().Len() != 0 {
+	if ts.BufLen() != 0 {
 		t.Fatal("test buffer should be zero")
 	}
 
@@ -467,50 +500,65 @@ func TestProxyConnMap(t *testing.T) {
 	// Expect entires in the map
 	c1addr := c1.LocalAddr().String()
 	c2addr := c2.LocalAddr().String()
-	if len(proxy.conns.m) != 2 {
-		t.Fatalf("expected connection map to have 2 entries, got %d", len(proxy.conns.m))
+	proxy.conns.RLock()
+	if lenM := len(proxy.conns.m); lenM != 2 {
+		proxy.conns.RUnlock()
+		t.Fatalf("expected connection map to have 2 entries, got %d", lenM)
 	}
 	if _, ok := proxy.conns.m[c1addr]; !ok {
+		proxy.conns.RUnlock()
 		t.Fatalf("connection key %s not in map", c1addr)
 	}
 	if _, ok := proxy.conns.m[c2addr]; !ok {
+		proxy.conns.RUnlock()
 		t.Fatalf("connection key %s not in map", c2addr)
 	}
+	proxy.conns.RUnlock()
 
 	// Close a connection
 	c1.Close()
-	if err := waitConnMapLen(proxy.conns.m, 1); err != nil {
+	if err := waitConnMapLen(proxy.conns, 1); err != nil {
 		t.Fatal(err)
 	}
+	proxy.conns.RLock()
 	if _, ok := proxy.conns.m[c1addr]; ok {
+		proxy.conns.RUnlock()
 		t.Fatalf("connection key %s should not be in map", c1addr)
 	}
+	proxy.conns.RUnlock()
 
 	// Close the other
 	c2.Close()
-	if err := waitConnMapLen(proxy.conns.m, 0); err != nil {
+	if err := waitConnMapLen(proxy.conns, 0); err != nil {
 		t.Fatal(err)
 	}
+	proxy.conns.RLock()
 	if _, ok := proxy.conns.m[c2addr]; ok {
+		proxy.conns.RUnlock()
 		t.Fatalf("connection key %s should not be in map", c1addr)
 	}
+	proxy.conns.RUnlock()
 }
 
-func waitConnMapLen(m map[string]net.Conn, expected int) error {
+func waitConnMapLen(cm *connMap, expected int) error {
+	var lenM int
 	for i := 0; i < 100; i++ {
-		if len(m) == expected {
+		cm.RLock()
+		lenM = len(cm.m)
+		cm.RUnlock()
+		if lenM == expected {
 			return nil
 		}
 
 		time.Sleep(time.Millisecond * 10)
 	}
 
-	return fmt.Errorf("timeout waiting for map to be len=%d, got %d", expected, len(m))
+	return fmt.Errorf("timeout waiting for map to be len=%d, got %d", expected, lenM)
 }
 
 func TestProxyCloseConnections(t *testing.T) {
 	ts := runTestTcpServer(t)
-	if ts.Buffer().Len() != 0 {
+	if ts.BufLen() != 0 {
 		t.Fatal("test buffer should be zero")
 	}
 
@@ -542,7 +590,7 @@ func TestProxyCloseConnections(t *testing.T) {
 	// Expect entires in the map
 	c1addr := c1.LocalAddr().String()
 	c2addr := c2.LocalAddr().String()
-	if err := waitConnMapLen(proxy.conns.m, 2); err != nil {
+	if err := waitConnMapLen(proxy.conns, 2); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := proxy.conns.m[c1addr]; !ok {
@@ -587,7 +635,7 @@ func TestProxyCloseConnections(t *testing.T) {
 	// 	t.Errorf("expected err2 to be net.ErrClosed, got %s", err)
 	// }
 	// Assert we have an empty map
-	if err := waitConnMapLen(proxy.conns.m, 0); err != nil {
+	if err := waitConnMapLen(proxy.conns, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -611,7 +659,7 @@ func TestProxyCloseConnections(t *testing.T) {
 
 func TestProxyPauseNewConn(t *testing.T) {
 	ts := runTestTcpServer(t)
-	if ts.Buffer().Len() != 0 {
+	if ts.BufLen() != 0 {
 		t.Fatal("test buffer should be zero")
 	}
 
@@ -647,7 +695,7 @@ func TestProxyPauseNewConn(t *testing.T) {
 		t.Fatal("expected no update to test server buffer")
 	}
 
-	if ts.Buffer().Len() != 0 {
+	if ts.BufLen() != 0 {
 		t.Fatal("expected zero buffer size")
 	}
 
