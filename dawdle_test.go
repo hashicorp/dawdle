@@ -250,7 +250,7 @@ func TestProxy(t *testing.T) {
 
 	actualN, err = conn.Write(writeBuffer)
 	if err == nil {
-		fmt.Println(err)
+		// fmt.Println(err.Error())
 		t.Fatal("expected error, got none, bytes written: ", actualN)
 	} else {
 		if !errors.Is(err, os.ErrDeadlineExceeded) {
