@@ -199,7 +199,7 @@ func TestProxy(t *testing.T) {
 	// want a size that is going to exhaust the proxy buffer, so we
 	// create a buffer of default size * 2.
 
-	writeBuffer := make([]byte, defaultBufferSize*2)
+	writeBuffer := make([]byte, defaultBufferSize*2) // 65536 bytes (32768 * 2)
 	var expectedB []byte
 
 	// ***********************
@@ -231,6 +231,8 @@ func TestProxy(t *testing.T) {
 		}
 	}
 
+	// since we performed the test twice i.e. sent writeBuffer twice, we have actually sent 131072 (65536 * 2) bytes until now 
+
 	// ***********
 	// ** Pause **
 	// ***********
@@ -240,9 +242,6 @@ func TestProxy(t *testing.T) {
 	proxy.Pause()
 	conn.SetWriteDeadline(time.Now().Add(time.Second))
 
-	// sleep 1 second to ensure that we are going to write to connection only after deadline expiry
-	time.Sleep(1 * time.Second)
-
 	actualN, err := rand.Read(writeBuffer)
 	if err != nil {
 		t.Fatal(err)
@@ -251,6 +250,9 @@ func TestProxy(t *testing.T) {
 		t.Fatalf("expected to read %d bytes, got %d", len(writeBuffer), actualN)
 	}
 
+	// on below conn.Write, any number of bytes may have been sent to other side depending on
+	// 1. how quickly the test executes (on Mac we have seen it actually 1 second to reach here, on Github runners it can reach within micro-seconds also)
+	// 2. the actual TCP buffer size set by the OS depending upon it's minimum limit even if we set it actually to 1 byte at line 194
 	actualN, err = conn.Write(writeBuffer)
 	if err == nil {
 		t.Fatal("expected error, got none, bytes written: ", actualN)
@@ -268,24 +270,21 @@ func TestProxy(t *testing.T) {
 	//
 	// First test to see that we at least wrote out our proxy buffer
 
-	// *******************
-	// because we are waiting a full 1 second to exceed the deadline, no data would be written at all
-	// hence there is no point to perform the below checks until the "Resume" section to look for any partial data
-	// bytes making it on the other end. 
-	// *******************
+	// Different OS have underlying TCP settings that can cause a varying number of bytes to be sent in before the WriteDeadline kicks in
+	// this doesn't just depend on the internal TCP write buffer size (which we reduced to 1 byte at line 194), but can be dependent on various other factors
+	// so we will just log here the actual number of bytes we were able to send
+	fmt.Printf("we actually sent %d number of bytes before the write deadline kicked in", actualN)
 
-	// if actualN < len(writeBuffer)/2 {
-	// 	t.Fatalf("expected to write at least %d bytes, got %d", len(writeBuffer)/2, actualN)
-	// }
-
-	// Save bytes remaining, in this case it would be the entire buffer contents.
+	// Save bytes remaining to be sent, so we copy all contents of writeBuffer from actualN (the ones we sent to rest of it), in some cases if 
+	// we sent all the data already, then this remainder can be empty too.
 	remainder := writeBuffer[actualN:]
 
-	// Expect first half of buffer to be written
-	// expectedB = append(expectedB, writeBuffer[:defaultBufferSize]...)
-	// if err := ts.WaitBuffer(expectedB); err != nil {
-	// 	t.Fatal(err)
-	// }
+	// Incase some bytes were actually sent, now we want to verify that those many bytes have been seen by the receiver. If the complete buffer was sent here, then 
+	// the expectedB would be in a total of 196608 bytes (131072 sent earlier + 65536 the full writeBuffer length sent now)
+	expectedB = append(expectedB, writeBuffer[:actualN]...)
+	if err := ts.WaitBuffer(expectedB); err != nil {
+		t.Fatal(err)
+	}
 
 	// ************
 	// ** Resume **
@@ -309,13 +308,15 @@ func TestProxy(t *testing.T) {
 		}
 	}
 
-	// Expect remainder of buffer from pause step to now be written
+	// Expect the rest of the "remainder" bytes are now sent to the other side, incase before resuming we sent only some contents.
+	// at this point we should definitely have "expectedB" to be a totla of 196608 because even if we sent half contents between Pause and Resume, the rest
+	// have been sent after resume so this should now be exactly that total.
 	expectedB = append(expectedB, remainder...)
 	if err := ts.WaitBuffer(expectedB); err != nil {
 		t.Fatal(err)
 	}
 
-	// Final write starts here.
+	// Final write starts here to ensure our proxy is fully functional now
 	actualN, err = rand.Read(writeBuffer)
 	if err != nil {
 		t.Fatal(err)
