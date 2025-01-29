@@ -18,6 +18,8 @@ jobs:
               with:
                 go-version: '1.23'
             - name: Test ubuntu TCP buffer size
-              run: sysctl net.ipv4.tcp_wmem
+              run: |
+                  sysctl net.ipv4.tcp_wmem
+                  sysctl -w net.ipv4.tcp_wmem="4096 16384 131072"
             - name: Test Go
               run: go test -v ./...
