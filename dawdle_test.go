@@ -238,7 +238,8 @@ func TestProxy(t *testing.T) {
 	// Pause the connection, and set a deadline. We expect this to
 	// fail, with the write maxing out the buffer before hanging.
 	proxy.Pause()
-	conn.SetWriteDeadline(time.Now().Add(100 * time.Microsecond))
+	startTime := time.Now()
+	conn.SetWriteDeadline(time.Now().Add(1000 * time.Microsecond))
 
 	actualN, err := rand.Read(writeBuffer)
 	if err != nil {
@@ -249,6 +250,8 @@ func TestProxy(t *testing.T) {
 	}
 
 	actualN, err = conn.Write(writeBuffer)
+	duration := time.Since(startTime)
+	fmt.Println("duration elapsed %v", duration)
 	if err == nil {
 		// fmt.Println(err.Error())
 		t.Fatal("expected error, got none, bytes written: ", actualN)
