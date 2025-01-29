@@ -278,8 +278,8 @@ func TestProxy(t *testing.T) {
 	// 	t.Fatalf("expected to write at least %d bytes, got %d", len(writeBuffer)/2, actualN)
 	// }
 
-	// Save bytes remaining
-	// remainder := writeBuffer[actualN:]
+	// Save bytes remaining, in this case it would be the entire buffer contents.
+	remainder := writeBuffer[actualN:]
 
 	// Expect first half of buffer to be written
 	// expectedB = append(expectedB, writeBuffer[:defaultBufferSize]...)
