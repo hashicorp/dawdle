@@ -199,7 +199,7 @@ func TestProxy(t *testing.T) {
 	// want a size that is going to exhaust the proxy buffer, so we
 	// create a buffer of default size * 2.
 
-	writeBuffer := make([]byte, defaultBufferSize*2) // 65536 bytes (32768 * 2)
+	writeBuffer := make([]byte, defaultBufferSize*2)
 	var expectedB []byte
 
 	// ***********************
@@ -230,8 +230,6 @@ func TestProxy(t *testing.T) {
 			t.Fatalf("basic write %d: err: %s", i, err)
 		}
 	}
-
-	// since we performed the test twice i.e. sent writeBuffer twice, we have actually sent 131072 (65536 * 2) bytes until now
 
 	// ***********
 	// ** Pause **
@@ -273,15 +271,13 @@ func TestProxy(t *testing.T) {
 	// Different OS have underlying TCP settings that can cause a varying number of bytes to be sent in before the WriteDeadline kicks in
 	// this doesn't just depend on the internal TCP write buffer size (which we reduced to 1 byte at line 194), but can be dependent on various other factors
 	// so we will just log here the actual number of bytes we were able to send
-	fmt.Printf("we actually sent %d number of bytes before the write deadline kicked in, ", actualN)
+	fmt.Printf("we actually sent %d number of bytes before the write deadline kicked in", actualN)
 
-	// Save bytes remaining to be sent, so we copy all contents of writeBuffer from actualN (the ones we sent to rest of it), in some cases if
-	// we sent all the data already, then this remainder can be empty too.
+	// Save bytes remaining
 	remainder := writeBuffer[actualN:]
 
-	// Incase some bytes were actually sent, now we want to verify that those many bytes have been seen by the receiver. If the complete buffer was sent here, then
-	// the expectedB would be in a total of 196608 bytes (131072 sent earlier + 65536 the full writeBuffer length sent now)
-	expectedB = append(expectedB, writeBuffer[:actualN]...)
+	// Expect first half of buffer to be written
+	expectedB = append(expectedB, writeBuffer[:defaultBufferSize]...)
 	if err := ts.WaitBuffer(expectedB); err != nil {
 		t.Fatal(err)
 	}
@@ -308,15 +304,13 @@ func TestProxy(t *testing.T) {
 		}
 	}
 
-	// Expect the rest of the "remainder" bytes are now sent to the other side, incase before resuming we sent only some contents.
-	// at this point we should definitely have "expectedB" to be a totla of 196608 because even if we sent half contents between Pause and Resume, the rest
-	// have been sent after resume so this should now be exactly that total.
-	expectedB = append(expectedB, remainder...)
+	// Expect second half of buffer from pause step to now be written
+	expectedB = append(expectedB, writeBuffer[defaultBufferSize:]...)
 	if err := ts.WaitBuffer(expectedB); err != nil {
 		t.Fatal(err)
 	}
 
-	// Final write starts here to ensure our proxy is fully functional now
+	// Final write starts here.
 	actualN, err = rand.Read(writeBuffer)
 	if err != nil {
 		t.Fatal(err)
