@@ -20,7 +20,6 @@ jobs:
             - name: Test TCP buffer settings
               run: |
                   sysctl net.ipv4.tcp_wmem
-                  sysctl net.ipv4.tcp_wmem_min
-                  sudo sysctl -w net.ipv4.tcp_wmem_min=1
+                  sudo sysctl -w net.ipv4.tcp_wmem="1 16384 131072"
                   sudo sysctl -p
                   sysctl net.ipv4.tcp_wmem
