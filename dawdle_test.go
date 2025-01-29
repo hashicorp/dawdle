@@ -281,7 +281,7 @@ func TestProxy(t *testing.T) {
 
 	// Incase some bytes were actually sent, now we want to verify that those many bytes have been seen by the receiver. If the complete buffer was sent here, then
 	// the expectedB would be in a total of 196608 bytes (131072 sent earlier + 65536 the full writeBuffer length sent now)
-	expectedB = append(expectedB, writeBuffer[:actualN+1]...)
+	expectedB = append(expectedB, writeBuffer[:actualN]...)
 	if err := ts.WaitBuffer(expectedB); err != nil {
 		t.Fatal(err)
 	}
