@@ -309,8 +309,8 @@ func TestProxy(t *testing.T) {
 		}
 	}
 
-	// Expect second half of buffer from pause step to now be written
-	expectedB = append(expectedB, writeBuffer[defaultBufferSize:]...)
+	// Expect remainder of buffer from pause step to now be written
+	expectedB = append(expectedB, remainder...)
 	if err := ts.WaitBuffer(expectedB); err != nil {
 		t.Fatal(err)
 	}
