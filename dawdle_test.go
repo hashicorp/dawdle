@@ -251,7 +251,7 @@ func TestProxy(t *testing.T) {
 
 	actualN, err = conn.Write(writeBuffer)
 	duration := time.Since(startTime)
-	fmt.Println("duration elapsed %v", duration)
+	fmt.Printf("duration elapsed %v", duration)
 	if err == nil {
 		// fmt.Println(err.Error())
 		t.Fatal("expected error, got none, bytes written: ", actualN)
