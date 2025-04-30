@@ -248,6 +248,9 @@ func TestProxy(t *testing.T) {
 		t.Fatalf("expected to read %d bytes, got %d", len(writeBuffer), actualN)
 	}
 
+	// Different OS have underlying TCP settings that can cause a varying number of bytes to be sent in before the WriteDeadline kicks in
+	// this doesn't just depend on the internal TCP write buffer size (which we reduced to 1 byte at line 194), but can be dependent on various other factors.
+
 	actualN, err = conn.Write(writeBuffer)
 	/* if err == nil {
 		t.Fatal("expected error, got none, bytes written: ", actualN)
@@ -266,18 +269,15 @@ func TestProxy(t *testing.T) {
 	//
 	// First test to see that we at least wrote out our proxy buffer
 
-	// Different OS have underlying TCP settings that can cause a varying number of bytes to be sent in before the WriteDeadline kicks in
-	// this doesn't just depend on the internal TCP write buffer size (which we reduced to 1 byte at line 194), but can be dependent on various other factors
-	// so we will just log here the actual number of bytes we were able to send
-
 	if actualN < len(writeBuffer)/2 {
 		t.Fatalf("expected to write at least %d bytes, got %d", len(writeBuffer)/2, actualN)
 	}
 
-	fmt.Printf("we actually sent %d number of bytes before the write deadline kicked in", actualN)
-
+	fmt.Printf("Actual : %d\n", actualN)
 	// Save bytes remaining
 	remainder := writeBuffer[actualN:]
+
+	fmt.Printf("Remainder : %d\n", len(remainder))
 
 	// Expect first half of buffer to be written
 	expectedB = append(expectedB, writeBuffer[:defaultBufferSize]...)
