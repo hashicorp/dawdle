@@ -270,9 +270,9 @@ func TestProxy(t *testing.T) {
 	// this doesn't just depend on the internal TCP write buffer size (which we reduced to 1 byte at line 194), but can be dependent on various other factors
 	// so we will just log here the actual number of bytes we were able to send
 
-	/* if actualN < len(writeBuffer)/2 {
+	if actualN < len(writeBuffer)/2 {
 		t.Fatalf("expected to write at least %d bytes, got %d", len(writeBuffer)/2, actualN)
-	} */
+	}
 
 	fmt.Printf("we actually sent %d number of bytes before the write deadline kicked in", actualN)
 
