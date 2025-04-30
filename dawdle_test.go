@@ -199,7 +199,7 @@ func TestProxy(t *testing.T) {
 	// want a size that is going to exhaust the proxy buffer, so we
 	// create a buffer of default size * 2.
 
-	writeBuffer := make([]byte, defaultBufferSize*2)
+	writeBuffer := make([]byte, 512*1024)
 	var expectedB []byte
 
 	// ***********************
@@ -250,6 +250,7 @@ func TestProxy(t *testing.T) {
 
 	// Different OS have underlying TCP settings that can cause a varying number of bytes to be sent in before the WriteDeadline kicks in
 	// this doesn't just depend on the internal TCP write buffer size (which we reduced to 1 byte at line 194), but can be dependent on various other factors.
+	// The write buffer in Ubuntu is too big that even after pausing Proxy, the write into buffer doesn't fail as expected.
 
 	actualN, err = conn.Write(writeBuffer)
 	/* if err == nil {
@@ -274,6 +275,7 @@ func TestProxy(t *testing.T) {
 	}
 
 	fmt.Printf("Actual : %d\n", actualN)
+
 	// Save bytes remaining
 	remainder := writeBuffer[actualN:]
 
