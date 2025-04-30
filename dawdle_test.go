@@ -199,7 +199,7 @@ func TestProxy(t *testing.T) {
 	// want a size that is going to exhaust the proxy buffer, so we
 	// create a buffer of default size * 2.
 
-	writeBuffer := make([]byte, 512*1024)
+	writeBuffer := make([]byte, 100*1024*1024)
 	var expectedB []byte
 
 	// ***********************
