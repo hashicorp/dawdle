@@ -7,15 +7,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"os"
-
-	// "crypto/rand"
 	"errors"
 	"fmt"
 	"io"
 	"net"
-
-	// "os"
+	"os"
 	"sync"
 	"testing"
 	"time"
