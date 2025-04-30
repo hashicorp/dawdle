@@ -199,7 +199,7 @@ func TestProxy(t *testing.T) {
 	// want a size that is going to exhaust the proxy buffer, so we
 	// create a buffer of default size * 2.
 
-	writeBuffer := make([]byte, defaultBufferSize*2)
+	writeBuffer := make([]byte, 10*1024*1024)
 	var expectedB []byte
 
 	// ***********************
@@ -249,9 +249,9 @@ func TestProxy(t *testing.T) {
 	}
 
 	actualN, err = conn.Write(writeBuffer)
-	/* if err == nil {
+	if err == nil {
 		t.Fatal("expected error, got none, bytes written: ", actualN)
-	} */
+	}
 	if err != nil {
 		if !errors.Is(err, os.ErrDeadlineExceeded) {
 			// Unexpected error
@@ -269,10 +269,6 @@ func TestProxy(t *testing.T) {
 	// Different OS have underlying TCP settings that can cause a varying number of bytes to be sent in before the WriteDeadline kicks in
 	// this doesn't just depend on the internal TCP write buffer size (which we reduced to 1 byte at line 194), but can be dependent on various other factors
 	// so we will just log here the actual number of bytes we were able to send
-
-	/* if actualN < len(writeBuffer)/2 {
-		t.Fatalf("expected to write at least %d bytes, got %d", len(writeBuffer)/2, actualN)
-	} */
 
 	fmt.Printf("we actually sent %d number of bytes before the write deadline kicked in", actualN)
 
