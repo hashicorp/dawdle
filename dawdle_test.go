@@ -197,7 +197,8 @@ func TestProxy(t *testing.T) {
 
 	// Start writing bytes (not string), and checking bytes here. We
 	// want a size that is going to exhaust the proxy buffer, so we
-	// create a buffer of default size * 2.
+	// create a buffer of size 10 MB. This is to accomodate proxy buffer
+	// exhaustion in both MacOS and Ubuntu where the tests can run.
 
 	writeBuffer := make([]byte, 10*1024*1024)
 	var expectedB []byte
@@ -469,79 +470,82 @@ func TestNewProxyWithListener(t *testing.T) {
 // 	}
 // }
 
-// func TestProxyConnMap(t *testing.T) {
-// 	ts := runTestTcpServer(t)
-// 	if ts.BufLen() != 0 {
-// 		t.Fatal("test buffer should be zero")
-// 	}
+func TestProxyConnMap(t *testing.T) {
 
-// 	defer ts.Close()
+	t.Skip("Skipping TestProxyConnMap temporarily")
 
-// 	// Create the proxy
-// 	proxy, err := NewProxy("tcp", ":0", ts.Addr())
-// 	if err != nil {
-// 		t.Fatal(err)
-// 	}
+	ts := runTestTcpServer(t)
+	if ts.BufLen() != 0 {
+		t.Fatal("test buffer should be zero")
+	}
 
-// 	defer proxy.Close()
-// 	proxy.Start()
+	defer ts.Close()
 
-// 	// Create two connections
-// 	c1, err := net.Dial("tcp", proxy.ListenerAddr())
-// 	if err != nil {
-// 		t.Fatal(err)
-// 	}
-// 	defer c1.Close()
+	// Create the proxy
+	proxy, err := NewProxy("tcp", ":0", ts.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
 
-// 	// Create two connections
-// 	c2, err := net.Dial("tcp", proxy.ListenerAddr())
-// 	if err != nil {
-// 		t.Fatal(err)
-// 	}
-// 	defer c2.Close()
+	defer proxy.Close()
+	proxy.Start()
 
-// 	// Expect entires in the map
-// 	c1addr := c1.LocalAddr().String()
-// 	c2addr := c2.LocalAddr().String()
-// 	proxy.conns.RLock()
-// 	if lenM := len(proxy.conns.m); lenM != 2 {
-// 		proxy.conns.RUnlock()
-// 		t.Fatalf("expected connection map to have 2 entries, got %d", lenM)
-// 	}
-// 	if _, ok := proxy.conns.m[c1addr]; !ok {
-// 		proxy.conns.RUnlock()
-// 		t.Fatalf("connection key %s not in map", c1addr)
-// 	}
-// 	if _, ok := proxy.conns.m[c2addr]; !ok {
-// 		proxy.conns.RUnlock()
-// 		t.Fatalf("connection key %s not in map", c2addr)
-// 	}
-// 	proxy.conns.RUnlock()
+	// Create two connections
+	c1, err := net.Dial("tcp", proxy.ListenerAddr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c1.Close()
 
-// 	// Close a connection
-// 	c1.Close()
-// 	if err := waitConnMapLen(proxy.conns, 1); err != nil {
-// 		t.Fatal(err)
-// 	}
-// 	proxy.conns.RLock()
-// 	if _, ok := proxy.conns.m[c1addr]; ok {
-// 		proxy.conns.RUnlock()
-// 		t.Fatalf("connection key %s should not be in map", c1addr)
-// 	}
-// 	proxy.conns.RUnlock()
+	// Create two connections
+	c2, err := net.Dial("tcp", proxy.ListenerAddr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c2.Close()
 
-// 	// Close the other
-// 	c2.Close()
-// 	if err := waitConnMapLen(proxy.conns, 0); err != nil {
-// 		t.Fatal(err)
-// 	}
-// 	proxy.conns.RLock()
-// 	if _, ok := proxy.conns.m[c2addr]; ok {
-// 		proxy.conns.RUnlock()
-// 		t.Fatalf("connection key %s should not be in map", c1addr)
-// 	}
-// 	proxy.conns.RUnlock()
-// }
+	// Expect entires in the map
+	c1addr := c1.LocalAddr().String()
+	c2addr := c2.LocalAddr().String()
+	proxy.conns.RLock()
+	if lenM := len(proxy.conns.m); lenM != 2 {
+		proxy.conns.RUnlock()
+		t.Fatalf("expected connection map to have 2 entries, got %d", lenM)
+	}
+	if _, ok := proxy.conns.m[c1addr]; !ok {
+		proxy.conns.RUnlock()
+		t.Fatalf("connection key %s not in map", c1addr)
+	}
+	if _, ok := proxy.conns.m[c2addr]; !ok {
+		proxy.conns.RUnlock()
+		t.Fatalf("connection key %s not in map", c2addr)
+	}
+	proxy.conns.RUnlock()
+
+	// Close a connection
+	c1.Close()
+	if err := waitConnMapLen(proxy.conns, 1); err != nil {
+		t.Fatal(err)
+	}
+	proxy.conns.RLock()
+	if _, ok := proxy.conns.m[c1addr]; ok {
+		proxy.conns.RUnlock()
+		t.Fatalf("connection key %s should not be in map", c1addr)
+	}
+	proxy.conns.RUnlock()
+
+	// Close the other
+	c2.Close()
+	if err := waitConnMapLen(proxy.conns, 0); err != nil {
+		t.Fatal(err)
+	}
+	proxy.conns.RLock()
+	if _, ok := proxy.conns.m[c2addr]; ok {
+		proxy.conns.RUnlock()
+		t.Fatalf("connection key %s should not be in map", c1addr)
+	}
+	proxy.conns.RUnlock()
+}
 
 func waitConnMapLen(cm *connMap, expected int) error {
 	var lenM int
