@@ -20,6 +20,6 @@ jobs:
       uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
       with:
         path: coverage.out
-        name: coverage-report
+        name: coverage-report-${{ matrix.go-version }}
     - name: Display coverage report
       run: go tool cover -func=coverage.out
