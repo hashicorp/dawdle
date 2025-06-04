@@ -51,8 +51,8 @@ func runTestTcpServer(t *testing.T) *testTcpServer {
 			}
 
 			go func(c net.Conn) {
-				io.Copy(s.writer, c)
-				c.Close()
+				_, _ = io.Copy(s.writer, c)
+				_ = c.Close()
 			}(conn)
 
 			go func() {
@@ -81,7 +81,7 @@ func runTestTcpServer(t *testing.T) *testTcpServer {
 }
 
 func (s *testTcpServer) Close() {
-	s.ln.Close()
+	_ = s.ln.Close()
 }
 
 func (s *testTcpServer) Addr() string {
@@ -155,7 +155,7 @@ func TestTestTcpServer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	conn.Close()
+	_ = conn.Close()
 	// Wait for a non-zero buffer length.
 	if err := ts.WaitBuffer([]byte(expected)); err != nil {
 		t.Fatal(err)
@@ -180,8 +180,8 @@ func TestProxy(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	defer proxy.Close()
-	proxy.Start()
+	defer func() { _ = proxy.Close() }()
+	_ = proxy.Start()
 
 	// Connect to the proxy. Disable the connection's write buffer so
 	// that it's not interfering with our test father down (we can
@@ -239,7 +239,7 @@ func TestProxy(t *testing.T) {
 	// Pause the connection, and set a deadline. We expect this to
 	// fail, with the write maxing out the buffer before hanging.
 	proxy.Pause()
-	conn.SetWriteDeadline(time.Now().Add(time.Second))
+	_ = conn.SetWriteDeadline(time.Now().Add(time.Second))
 
 	actualN, err := rand.Read(writeBuffer)
 	if err != nil {
@@ -289,7 +289,7 @@ func TestProxy(t *testing.T) {
 	// bytes, if any, and test that everything made it (including any
 	// still in the OS buffer). Then we perform a final regular write
 	// to ensure everything is functional.
-	conn.SetWriteDeadline(time.Time{})
+	_ = conn.SetWriteDeadline(time.Time{})
 	proxy.Resume()
 
 	if len(remainder) > 0 {
@@ -367,7 +367,7 @@ func TestNewProxyBuffers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	defer proxy.Close()
+	defer func() { _ = proxy.Close() }()
 
 	if proxy.rbufSize != 1 {
 		t.Fatalf("expected rbufSize=1, got %d", proxy.rbufSize)
@@ -400,7 +400,7 @@ func TestNewProxyListenErr(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	defer proxy.Close()
+	defer func() { _ = proxy.Close() }()
 
 	err = proxy.Start()
 	if err == nil {
@@ -423,7 +423,7 @@ func TestNewProxyWithListener(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	defer proxy.Close()
+	defer func() { _ = proxy.Close() }()
 
 	err = proxy.Start()
 	if err == nil {
@@ -487,22 +487,22 @@ func TestProxyConnMap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	defer proxy.Close()
-	proxy.Start()
+	defer func() { _ = proxy.Close() }()
+	_ = proxy.Start()
 
 	// Create two connections
 	c1, err := net.Dial("tcp", proxy.ListenerAddr())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c1.Close()
+	defer func() { _ = c1.Close() }()
 
 	// Create two connections
 	c2, err := net.Dial("tcp", proxy.ListenerAddr())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c2.Close()
+	defer func() { _ = c2.Close() }()
 
 	// Expect entires in the map
 	c1addr := c1.LocalAddr().String()
@@ -523,7 +523,7 @@ func TestProxyConnMap(t *testing.T) {
 	proxy.conns.RUnlock()
 
 	// Close a connection
-	c1.Close()
+	_ = c1.Close()
 	if err := waitConnMapLen(proxy.conns, 1); err != nil {
 		t.Fatal(err)
 	}
@@ -535,7 +535,7 @@ func TestProxyConnMap(t *testing.T) {
 	proxy.conns.RUnlock()
 
 	// Close the other
-	c2.Close()
+	_ = c2.Close()
 	if err := waitConnMapLen(proxy.conns, 0); err != nil {
 		t.Fatal(err)
 	}
@@ -577,22 +577,22 @@ func TestProxyCloseConnections(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	defer proxy.Close()
-	proxy.Start()
+	defer func() { _ = proxy.Close() }()
+	_ = proxy.Start()
 
 	// Create two connections
 	c1, err := net.Dial("tcp", proxy.ListenerAddr())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c1.Close()
+	defer func() { _ = c1.Close() }()
 
 	// Create two connections
 	c2, err := net.Dial("tcp", proxy.ListenerAddr())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c2.Close()
+	defer func() { _ = c2.Close() }()
 
 	// Expect entires in the map
 	c1addr := c1.LocalAddr().String()
@@ -652,13 +652,13 @@ func TestProxyCloseConnections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c3.Close()
+	defer func() { _ = c3.Close() }()
 
 	if _, err := io.WriteString(c3, "foobar"); err != nil {
 		t.Fatal(err)
 	}
 
-	c3.Close()
+	_ = c3.Close()
 	if err := ts.WaitBuffer([]byte("foobar")); err != nil {
 		t.Fatal(err)
 	}
@@ -678,8 +678,8 @@ func TestProxyPauseNewConn(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	defer proxy.Close()
-	proxy.Start()
+	defer func() { _ = proxy.Close() }()
+	_ = proxy.Start()
 
 	// Pause immediately
 	proxy.Pause()
@@ -689,7 +689,7 @@ func TestProxyPauseNewConn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// This should succeed, due to buffering on the OS side (we can fix it if the
 	// test ever fails)
