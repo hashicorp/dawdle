@@ -387,7 +387,7 @@ func (p *proxy) run() error {
 // Handle handles connection with and the general read/write loops
 // with the remote host.
 func (p *proxy) Handle(local net.Conn) error {
-	defer local.Close()
+	defer func() { _ = local.Close() }()
 
 	// Connect to remote
 	remote, err := net.Dial(p.proto, p.remoteAddr)
@@ -395,7 +395,7 @@ func (p *proxy) Handle(local net.Conn) error {
 		return ErrProxyHandleRemoteConnect(err)
 	}
 
-	defer remote.Close()
+	defer func() { _ = remote.Close() }()
 
 	errCh := make(chan error)
 
