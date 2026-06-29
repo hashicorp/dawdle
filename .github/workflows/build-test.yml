@@ -24,4 +24,4 @@ jobs:
     - name: Display coverage report
       run: go tool cover -func=coverage.out
     - name: Run Linter
-      uses: golangci/golangci-lint-action@e7fa5ac41e1cf5b7d48e45e42232ce7ada589601 # v9.1.0
+      uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
